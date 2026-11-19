@@ -43,8 +43,9 @@ public class ThalliumClient implements ClientModInitializer {
         return id != null && known.contains(id);
     }
 
+    /** İsmin başına gelen etiket: altın sarısı, kalın değil, köşeli parantez içinde "Th". */
     public static MutableText prefix() {
-        return Text.literal("Thallium ").setStyle(Style.EMPTY.withColor(0x52B043).withBold(true));
+        return Text.literal("[Th] ").setStyle(Style.EMPTY.withColor(0xFFAA00));
     }
 
     @Override
