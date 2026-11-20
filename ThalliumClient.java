@@ -26,6 +26,7 @@ import java.util.Base64;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -46,6 +47,7 @@ public class ThalliumClient implements ClientModInitializer {
     private static volatile Set<UUID> known = Set.of();
     private static volatile Map<UUID, String> capes = Map.of();
     private static volatile Map<UUID, Boolean> slims = Map.of();
+    private static volatile Map<String, UUID> names = Map.of();
 
     private static final Map<UUID, Identifier> customSkins = new ConcurrentHashMap<>();
     private static final Map<UUID, Identifier> customCapes = new ConcurrentHashMap<>();
@@ -74,6 +76,19 @@ public class ThalliumClient implements ClientModInitializer {
 
     public static MutableText prefix() {
         return Text.literal("[Th] ").setStyle(Style.EMPTY.withColor(0xFFAA00));
+    }
+
+    public static Text injectChatPrefix(Text message) {
+        if (message == null || names.isEmpty()) return message;
+        String plain = message.getString().toLowerCase(Locale.ROOT);
+        for (Map.Entry<String, UUID> entry : names.entrySet()) {
+            String playerName = entry.getKey();
+            UUID id = entry.getValue();
+            if (!playerName.isEmpty() && isThallium(id) && plain.contains(playerName)) {
+                return prefix().append(message);
+            }
+        }
+        return message;
     }
 
     @Override
@@ -111,8 +126,15 @@ public class ThalliumClient implements ClientModInitializer {
         return (el != null && !el.isJsonNull()) ? el.getAsString() : null;
     }
 
-    private static void syncTexture(MinecraftClient mc, UUID id, String b64, String kind,
+    private static String cleanBase64(String raw) {
+        if (raw == null || raw.isEmpty()) return null;
+        int comma = raw.indexOf(',');
+        return comma >= 0 ? raw.substring(comma + 1).trim() : raw.trim();
+    }
+
+    private static void syncTexture(MinecraftClient mc, UUID id, String rawB64, String kind,
                                     Map<UUID, String> hashMap, Map<UUID, Identifier> texMap) {
+        String b64 = cleanBase64(rawB64);
         if (b64 == null || b64.isEmpty()) {
             if (hashMap.remove(id) != null) {
                 Identifier old = texMap.remove(id);
@@ -143,19 +165,36 @@ public class ThalliumClient implements ClientModInitializer {
         MinecraftClient mc = MinecraftClient.getInstance();
         if (mc.world == null) return;
 
-        CompletableFuture<List<String>> ids = new CompletableFuture<>();
+        CompletableFuture> listFuture = new CompletableFuture<>();
         mc.execute(() -> {
             try {
-                List<String> out = new ArrayList<>();
+                Map<String, UUID> map = new HashMap<>();
                 ClientPlayNetworkHandler h = mc.getNetworkHandler();
-                if (h != null) for (PlayerListEntry e : h.getPlayerList()) out.add(e.getProfile().getId().toString());
-                ids.complete(out);
+                if (h != null) {
+                    for (PlayerListEntry e : h.getPlayerList()) {
+                        UUID id = e.getProfile().getId();
+                        String n = e.getProfile().getName();
+                        if (id != null && n != null && !n.isEmpty()) {
+                            map.put(n.toLowerCase(Locale.ROOT), id);
+                        }
+                    }
+                }
+                if (map.isEmpty() && mc.player != null) {
+                    map.put(mc.player.getName().getString().toLowerCase(Locale.ROOT), mc.player.getUuid());
+                }
+                listFuture.complete(map);
             } catch (Throwable t) {
-                ids.completeExceptionally(t);
+                listFuture.completeExceptionally(t);
             }
         });
-        List<String> all = ids.get(5, TimeUnit.SECONDS);
-        if (all.isEmpty()) return;
+
+        Map<String, UUID> nameMap = listFuture.get(5, TimeUnit.SECONDS);
+        if (nameMap.isEmpty()) return;
+
+        List<String> all = new ArrayList<>();
+        for (UUID id : new HashSet<>(nameMap.values())) {
+            all.add(id.toString());
+        }
 
         Set<UUID> found = new HashSet<>();
         Map<UUID, String> caps = new HashMap<>();
@@ -188,6 +227,8 @@ public class ThalliumClient implements ClientModInitializer {
                 syncTexture(mc, id, capePng, "cape", capeHashes, customCapes);
             }
         }
+
+        names = nameMap;
         known = found;
         capes = caps;
         slims = slimMap;
