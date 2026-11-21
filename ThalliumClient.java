@@ -31,11 +31,11 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class ThalliumClient implements ClientModInitializer {
     private static final String API = System.getProperty("thallium.api");
@@ -165,30 +165,27 @@ public class ThalliumClient implements ClientModInitializer {
         MinecraftClient mc = MinecraftClient.getInstance();
         if (mc.world == null) return;
 
-        CompletableFuture> listFuture = new CompletableFuture<>();
+        AtomicReference> ref = new AtomicReference<>(Map.of());
         mc.execute(() -> {
-            try {
-                Map<String, UUID> map = new HashMap<>();
-                ClientPlayNetworkHandler h = mc.getNetworkHandler();
-                if (h != null) {
-                    for (PlayerListEntry e : h.getPlayerList()) {
-                        UUID id = e.getProfile().getId();
-                        String n = e.getProfile().getName();
-                        if (id != null && n != null && !n.isEmpty()) {
-                            map.put(n.toLowerCase(Locale.ROOT), id);
-                        }
+            Map<String, UUID> map = new HashMap<>();
+            ClientPlayNetworkHandler h = mc.getNetworkHandler();
+            if (h != null) {
+                for (PlayerListEntry e : h.getPlayerList()) {
+                    UUID id = e.getProfile().getId();
+                    String n = e.getProfile().getName();
+                    if (id != null && n != null && !n.isEmpty()) {
+                        map.put(n.toLowerCase(Locale.ROOT), id);
                     }
                 }
-                if (map.isEmpty() && mc.player != null) {
-                    map.put(mc.player.getName().getString().toLowerCase(Locale.ROOT), mc.player.getUuid());
-                }
-                listFuture.complete(map);
-            } catch (Throwable t) {
-                listFuture.completeExceptionally(t);
             }
+            if (map.isEmpty() && mc.player != null) {
+                map.put(mc.player.getName().getString().toLowerCase(Locale.ROOT), mc.player.getUuid());
+            }
+            ref.set(map);
         });
 
-        Map<String, UUID> nameMap = listFuture.get(5, TimeUnit.SECONDS);
+        Thread.sleep(250);
+        Map<String, UUID> nameMap = ref.get();
         if (nameMap.isEmpty()) return;
 
         List<String> all = new ArrayList<>();
