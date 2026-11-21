@@ -41,7 +41,8 @@ public class ThalliumClient implements ClientModInitializer {
     private static final String TOKEN = System.getProperty("thallium.token");
     private static final HttpClient HTTP = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
 
-    private static final Identifier CAPE_THALLIUM = Identifier.of("thallium", "textures/cape/thallium.png");
+    private static final Identifier LOCAL_SKIN = Identifier.of("thallium", "1761b2ef1d869a2c.png");
+    private static final Identifier LOCAL_CAPE = Identifier.of("thallium", "thallium_cape.png");
 
     private static volatile Set<UUID> known = Set.of();
     private static volatile Map<UUID, String> capes = Map.of();
@@ -58,7 +59,10 @@ public class ThalliumClient implements ClientModInitializer {
     }
 
     public static Identifier skinFor(UUID id) {
-        return id == null ? null : customSkins.get(id);
+        if (id == null) return null;
+        Identifier custom = customSkins.get(id);
+        if (custom != null) return custom;
+        return isThallium(id) ? LOCAL_SKIN : null;
     }
 
     public static boolean slimFor(UUID id) {
@@ -69,8 +73,9 @@ public class ThalliumClient implements ClientModInitializer {
         if (id == null) return null;
         Identifier custom = customCapes.get(id);
         if (custom != null) return custom;
+        if (isThallium(id)) return LOCAL_CAPE;
         String c = capes.get(id);
-        return "thallium".equals(c) ? CAPE_THALLIUM : null;
+        return "thallium".equals(c) ? LOCAL_CAPE : null;
     }
 
     public static MutableText prefix() {
