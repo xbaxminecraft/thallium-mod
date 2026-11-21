@@ -1,0 +1,13 @@
+{
+  "required": true,
+  "package": "dev.thallium.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "PlayerEntityMixin",
+    "PlayerListHudMixin",
+    "PlayerListEntryMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
