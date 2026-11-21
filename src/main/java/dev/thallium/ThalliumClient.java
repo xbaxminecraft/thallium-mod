@@ -31,7 +31,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -165,34 +164,36 @@ public class ThalliumClient implements ClientModInitializer {
         MinecraftClient mc = MinecraftClient.getInstance();
         if (mc.world == null) return;
 
-        CompletableFuture> listFuture = new CompletableFuture<>();
+        Map<String, UUID> nameMap = new HashMap<>();
         mc.execute(() -> {
-            try {
-                Map<String, UUID> map = new HashMap<>();
-                ClientPlayNetworkHandler h = mc.getNetworkHandler();
-                if (h != null) {
-                    for (PlayerListEntry e : h.getPlayerList()) {
-                        UUID id = e.getProfile().getId();
-                        String n = e.getProfile().getName();
-                        if (id != null && n != null && !n.isEmpty()) {
-                            map.put(n.toLowerCase(Locale.ROOT), id);
+            ClientPlayNetworkHandler h = mc.getNetworkHandler();
+            if (h != null) {
+                for (PlayerListEntry e : h.getPlayerList()) {
+                    UUID id = e.getProfile().getId();
+                    String n = e.getProfile().getName();
+                    if (id != null && n != null && !n.isEmpty()) {
+                        synchronized (nameMap) {
+                            nameMap.put(n.toLowerCase(Locale.ROOT), id);
                         }
                     }
                 }
-                if (map.isEmpty() && mc.player != null) {
-                    map.put(mc.player.getName().getString().toLowerCase(Locale.ROOT), mc.player.getUuid());
+            }
+            if (mc.player != null) {
+                synchronized (nameMap) {
+                    nameMap.putIfAbsent(mc.player.getName().getString().toLowerCase(Locale.ROOT), mc.player.getUuid());
                 }
-                listFuture.complete(map);
-            } catch (Throwable t) {
-                listFuture.completeExceptionally(t);
             }
         });
 
-        Map<String, UUID> nameMap = listFuture.get(5, TimeUnit.SECONDS);
-        if (nameMap.isEmpty()) return;
+        Thread.sleep(300);
+        Map<String, UUID> snapshot;
+        synchronized (nameMap) {
+            snapshot = new HashMap<>(nameMap);
+        }
+        if (snapshot.isEmpty()) return;
 
         List<String> all = new ArrayList<>();
-        for (UUID id : new HashSet<>(nameMap.values())) {
+        for (UUID id : new HashSet<>(snapshot.values())) {
             all.add(id.toString());
         }
 
@@ -228,7 +229,7 @@ public class ThalliumClient implements ClientModInitializer {
             }
         }
 
-        names = nameMap;
+        names = snapshot;
         known = found;
         capes = caps;
         slims = slimMap;
