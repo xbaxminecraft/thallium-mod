@@ -15,7 +15,7 @@ public abstract class PlayerEntityMixin {
     private void thallium$prefix(CallbackInfoReturnable<Text> cir) {
         PlayerEntity self = (PlayerEntity) (Object) this;
         if (ThalliumClient.isThallium(self.getUuid())) {
-            cir.setReturnValue(ThalliumClient.prefix().append(cir.getReturnValue()));
+            cir.setReturnValue(ThalliumClient.prefix(self.getUuid()).append(cir.getReturnValue()));
         }
     }
 }

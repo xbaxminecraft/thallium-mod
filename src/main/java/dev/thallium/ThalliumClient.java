@@ -8,14 +8,11 @@ import net.fabricmc.api.ClientModInitializer;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayNetworkHandler;
 import net.minecraft.client.network.PlayerListEntry;
-import net.minecraft.client.texture.NativeImage;
-import net.minecraft.client.texture.NativeImageBackedTexture;
 import net.minecraft.text.MutableText;
 import net.minecraft.text.Style;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
 
-import java.io.ByteArrayInputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -23,13 +20,10 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -46,53 +40,40 @@ public class ThalliumClient implements ClientModInitializer {
 
     private static final Identifier CAPE_THALLIUM = Identifier.of("thallium", "textures/cape/thallium.png");
 
-    /** Bir oyuncunun seçtiği kozmetikler. cape: "thallium", "custom" ya da null. tv: yüklenen dosyaların sürümü. */
-    private record Cos(String cape, boolean skin, boolean slim, int tv) {}
+    private static final int GOLD = 0xFFAA00;
+    private static final int DIAMOND = 0x2A7FA8; // sunucudaki tags tablosunda "diamond" verilen oyuncuların varsayılan rengi
 
-    /** Şu an çevrimiçi olan Thallium oyuncuları ve kozmetikleri (arka plan iş parçacığı günceller, çizim okur). */
+    /** Bir oyuncunun kozmetikleri. cape: "thallium" ya da null. tag: özel etiket. color: seçtiği [Th] rengi (null = varsayılan). */
+    private record Cos(String cape, String tag, Integer color) {}
+
+    /** Şu an çevrimiçi olan Thallium oyuncuları (arka plan iş parçacığı günceller, çizim okur). */
     private static volatile Map<UUID, Cos> players = Map.of();
-    /** İndirilip oyuna kaydedilmiş dokular. Anahtar: "uuid/skin/sürüm" ya da "uuid/cape/sürüm". */
-    private static final Map<String, Identifier> TEX = new ConcurrentHashMap<>();
-    private static final Set<String> PENDING = ConcurrentHashMap.newKeySet();
-    private static ScheduledExecutorService ex;
 
     public static boolean isThallium(UUID id) {
         return id != null && players.containsKey(id);
     }
 
-    private static String key(UUID id, String kind, int tv) {
-        return id + "/" + kind + "/" + tv;
-    }
-
-    /** Bu oyuncunun pelerin dokusu (Thallium pelerini ya da yüklediği), yoksa null. */
+    /** Bu oyuncunun Thallium pelerini seçiliyse dokusu, yoksa null. */
     public static Identifier capeFor(UUID id) {
         Cos c = id == null ? null : players.get(id);
-        if (c == null || c.cape() == null) return null;
-        if ("thallium".equals(c.cape())) return CAPE_THALLIUM;
-        if ("custom".equals(c.cape())) return TEX.get(key(id, "cape", c.tv()));
-        return null;
+        return c != null && "thallium".equals(c.cape()) ? CAPE_THALLIUM : null;
     }
 
-    /** Bu oyuncunun yüklediği skin dokusu (indirilmişse), yoksa null. */
-    public static Identifier skinFor(UUID id) {
+    /** İsmin başına gelen etiket: köşeli parantez içinde "Th". Renk: oyuncunun seçtiği, yoksa özel etiket, yoksa altın sarısı. */
+    public static MutableText prefix(UUID id) {
         Cos c = id == null ? null : players.get(id);
-        return c != null && c.skin() ? TEX.get(key(id, "skin", c.tv())) : null;
-    }
-
-    public static boolean slimFor(UUID id) {
-        Cos c = id == null ? null : players.get(id);
-        return c != null && c.slim();
-    }
-
-    /** İsmin başına gelen etiket: altın sarısı, kalın değil, köşeli parantez içinde "Th". */
-    public static MutableText prefix() {
-        return Text.literal("[Th] ").setStyle(Style.EMPTY.withColor(0xFFAA00));
+        int color = GOLD;
+        if (c != null) {
+            if (c.color() != null) color = c.color();
+            else if ("diamond".equals(c.tag())) color = DIAMOND;
+        }
+        return Text.literal("[Th] ").setStyle(Style.EMPTY.withColor(color));
     }
 
     @Override
     public void onInitializeClient() {
         if (API == null || TOKEN == null) return;
-        ex = Executors.newScheduledThreadPool(2, r -> {
+        ScheduledExecutorService ex = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "thallium-net");
             t.setDaemon(true);
             return t;
@@ -148,49 +129,21 @@ public class ThalliumClient implements ClientModInitializer {
             for (Map.Entry<String, JsonElement> e : ps.entrySet()) {
                 UUID id = UUID.fromString(e.getKey());
                 JsonObject p = e.getValue().getAsJsonObject();
-                JsonElement c = p.get("cape");
-                String cape = c != null && !c.isJsonNull() ? c.getAsString() : null;
-                boolean skin = p.has("skin") && p.get("skin").getAsBoolean();
-                boolean slim = p.has("model") && "slim".equals(p.get("model").getAsString());
-                int tv = p.has("tv") ? p.get("tv").getAsInt() : 0;
-                found.put(id, new Cos(cape, skin, slim, tv));
+                found.put(id, new Cos(str(p, "cape"), str(p, "tag"), color(p)));
             }
         }
         players = found;
-        // Yüklenen dosyaları (kendi pelerin / skin) arka planda indir
-        for (Map.Entry<UUID, Cos> e : found.entrySet()) {
-            Cos c = e.getValue();
-            if ("custom".equals(c.cape())) fetchTexture(e.getKey(), "cape", c.tv());
-            if (c.skin()) fetchTexture(e.getKey(), "skin", c.tv());
-        }
     }
 
-    /** Sunucudan PNG'yi indirip oyunun doku sistemine kaydeder (bir kez, sürüm başına). */
-    private static void fetchTexture(UUID id, String kind, int tv) {
-        String k = key(id, kind, tv);
-        if (TEX.containsKey(k) || !PENDING.add(k)) return;
-        ex.execute(() -> {
-            try {
-                HttpResponse<byte[]> r = HTTP.send(
-                        HttpRequest.newBuilder(URI.create(API + "/tex/" + id + "/" + kind + "?v=" + tv)).timeout(Duration.ofSeconds(8)).GET().build(),
-                        HttpResponse.BodyHandlers.ofByteArray());
-                if (r.statusCode() != 200) { PENDING.remove(k); return; }
-                byte[] data = r.body();
-                MinecraftClient mc = MinecraftClient.getInstance();
-                mc.execute(() -> { // dokular sadece oyun iş parçacığında kaydedilebilir
-                    try {
-                        NativeImage img = NativeImage.read(new ByteArrayInputStream(data));
-                        Identifier ident = Identifier.of("thallium", kind + "/" + id + "/" + tv);
-                        mc.getTextureManager().registerTexture(ident, new NativeImageBackedTexture(img));
-                        TEX.put(k, ident);
-                    } catch (Throwable ignored) {
-                    } finally {
-                        PENDING.remove(k);
-                    }
-                });
-            } catch (Throwable t) {
-                PENDING.remove(k);
-            }
-        });
+    private static String str(JsonObject o, String key) {
+        JsonElement e = o.get(key);
+        return e != null && !e.isJsonNull() ? e.getAsString() : null;
+    }
+
+    /** Sunucudan gelen "#rrggbb" rengini sayıya çevirir; yoksa ya da bozuksa null. */
+    private static Integer color(JsonObject o) {
+        String s = str(o, "color");
+        if (s == null || !s.matches("#[0-9a-fA-F]{6}")) return null;
+        return Integer.parseInt(s.substring(1), 16);
     }
 }
